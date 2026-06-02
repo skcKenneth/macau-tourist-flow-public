@@ -528,14 +528,14 @@ def run(cfg: dict[str, Any]) -> bool:
             bootstrap_summary["beta_p_low"],
             bootstrap_summary["beta_p_high"],
         )
+        import numpy as np
+
         def _yaml_safe(obj: Any) -> Any:
             if isinstance(obj, np.ndarray):
                 return obj.tolist()
             if isinstance(obj, tuple):
                 return list(obj)
             return obj
-
-        import numpy as np
 
         boot_yaml = {
             k: _yaml_safe(v)
