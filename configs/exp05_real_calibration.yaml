@@ -56,6 +56,17 @@ hypothesis:
   validation_mae_threshold: 0.05
   max_attraction_error_threshold: 0.10
 
+# Month-resampling bootstrap CIs for fitted parameters and held-out MAE (Fig02/03).
+bootstrap:
+  enabled: true
+  n_bootstrap: 20
+  resample_seed: 42
+  seed: 1000
+  ci_percent: [5.0, 95.0]
+  log_every: 5
+  calibration_override:
+    n_epochs: 10   # fewer epochs per replicate to keep runtime manageable
+
 output:
   base_dir: experiments
   figures:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.evaluation.generate_figures import (
     FIGURE_MAP,
     _build_results_table,
@@ -12,6 +14,18 @@ from src.evaluation.generate_figures import (
 )
 
 EXP_ROOT = Path("experiments")
+
+# Experiment dirs needed to regenerate the headline figures asserted below. The
+# public checkout commits only the synthetic EXP-01..04 summaries (EXP-05+ outputs
+# are gitignored and require the full data pipeline), so this test must skip rather
+# than fail when those source dirs are absent.
+_REQUIRED_FIGURE_SOURCES = ("EXP-01", "EXP-05", "EXP-07", "EXP-09", "EXP-10", "EXP-11", "EXP-12")
+
+
+def _figure_sources_present() -> bool:
+    return EXP_ROOT.exists() and all(
+        _latest_exp_dir(EXP_ROOT, pat) is not None for pat in _REQUIRED_FIGURE_SOURCES
+    )
 
 
 def test_latest_exp_dir_picks_newest(tmp_path):
@@ -28,9 +42,11 @@ def test_latest_exp_dir_none_when_missing(tmp_path):
 
 def test_generate_all_figures_produces_key_outputs(tmp_path):
     """Over the real experiment dirs, the high-value figures + table are produced."""
-    if not EXP_ROOT.exists():
-        import pytest
-        pytest.skip("no experiments/ directory present")
+    if not _figure_sources_present():
+        pytest.skip(
+            "headline figure source experiments (EXP-05+) not present; "
+            "run the full pipeline to regenerate (see README 'Reproduce')"
+        )
 
     out = tmp_path / "figures"
     result = generate_all_figures(EXP_ROOT, out, dpi=300)
@@ -56,7 +72,6 @@ def test_generate_all_figures_produces_key_outputs(tmp_path):
 
 def test_results_table_standalone(tmp_path):
     if not EXP_ROOT.exists():
-        import pytest
         pytest.skip("no experiments/ directory present")
     _build_results_table(EXP_ROOT, tmp_path)
     assert (tmp_path / "results_table.csv").exists()

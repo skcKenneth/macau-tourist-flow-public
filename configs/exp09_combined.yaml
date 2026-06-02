@@ -54,6 +54,13 @@ metering:
 # Part 2 -- compliance sweep (apply optimised eta, vary fraction who follow it).
 compliance:
   phi_values: [0.1, 0.25, 0.5, 0.75, 1.0]
+  # Part 2b -- heterogeneous/uncertain compliance: draw phi ~ Beta(mean, kappa)
+  # and report the routing peak-reduction BAND (p5-p95) instead of a point.
+  distribution:
+    mean: 0.5            # population mean compliance
+    concentration: 8.0   # Beta kappa = a + b (larger => tighter around the mean)
+    n_samples: 64
+    seed: 42
 
 # Part 3 -- robustness of the headline combined result.
 robustness:

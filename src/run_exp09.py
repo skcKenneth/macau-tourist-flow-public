@@ -171,6 +171,32 @@ def run(cfg: dict[str, Any]) -> bool:
         logger.info("  phi=%.2f -> ruins peak_red=%.1f%% conv=%s",
                     phi, phi_rows[-1]["ruins_peak_reduction_pct"], info["converged"])
 
+    # ── Part 2b: heterogeneous/uncertain compliance distribution ──────────────
+    from src.optimization.interventions import (
+        compliance_robustness_band,
+        sample_beta_compliance,
+    )
+
+    dist_cfg = cfg["compliance"].get("distribution")
+    dist_band: dict[str, Any] | None = None
+    if dist_cfg:
+        phi_draws = sample_beta_compliance(
+            mean=float(dist_cfg["mean"]),
+            concentration=float(dist_cfg["concentration"]),
+            n_samples=int(dist_cfg["n_samples"]),
+            seed=int(dist_cfg.get("seed", 42)),
+        )
+        dist_band = compliance_robustness_band(
+            solver, g, eta, report_idx=ruins_idx, phi_samples=phi_draws, damping=damping
+        )
+        logger.info(
+            "  Compliance ~ Beta(mean=%.2f, kappa=%.1f): routing peak_red "
+            "mean=%.1f%% band[p5,p95]=[%.1f%%, %.1f%%] conv=%.0f%%",
+            float(dist_cfg["mean"]), float(dist_cfg["concentration"]),
+            dist_band["reduction_mean"], dist_band["reduction_p5"],
+            dist_band["reduction_p95"], 100.0 * dist_band["frac_converged"],
+        )
+
     # ── Part 3: robustness (profiles x beta), deployed eta, full compliance ───
     rob_rows = []
     base_beta = float(params_dict["beta"].item())
@@ -191,12 +217,12 @@ def run(cfg: dict[str, Any]) -> bool:
     solver.params = solver._parse_params(params_dict)  # restore
     logger.info("Part 3 robustness: %d (profile x beta) runs", len(rob_rows))
 
-    _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order)
+    _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order, dist_band)
     logger.info("EXP-09 done. Outputs in: %s", outdir)
     return True
 
 
-def _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order):
+def _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order, dist_band=None):
     import matplotlib.pyplot as plt
     from src.utils import io
     fig_cfg = cfg["output"]["figures"]
@@ -220,12 +246,36 @@ def _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order
     ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
     fig.tight_layout(); io.save_figure(fig, outdir, "pareto_combined", dpi=dpi); plt.close(fig)
 
-    # Compliance phi figure
+    # Compliance distribution CSV (Part 2b)
+    if dist_band is not None:
+        with open(outdir / "compliance_distribution.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["statistic", "value"])
+            for k, v in dist_band.items():
+                if k == "reductions":
+                    continue
+                w.writerow([k, v])
+
+    # Compliance phi figure (deterministic sweep + distribution band overlay)
     fig, ax = plt.subplots(figsize=tuple(fig_cfg.get("figsize_phi", [8, 5])))
-    ax.plot([r["phi"] for r in phi_rows], [r["ruins_peak_reduction_pct"] for r in phi_rows], "o-", color="tab:green")
+    ax.plot([r["phi"] for r in phi_rows], [r["ruins_peak_reduction_pct"] for r in phi_rows],
+            "o-", color="tab:green", label="Deterministic phi sweep")
+    if dist_band is not None:
+        # Shade the p5-p95 routing-benefit band from the Beta-distributed compliance,
+        # placed at the population mean compliance on the x-axis.
+        x = dist_band["phi_mean_sampled"]
+        ax.fill_between([0.0, 1.0], dist_band["reduction_p5"], dist_band["reduction_p95"],
+                        color="tab:purple", alpha=0.12,
+                        label="Heterogeneous compliance p5-p95")
+        ax.errorbar([x], [dist_band["reduction_mean"]],
+                    yerr=[[dist_band["reduction_mean"] - dist_band["reduction_p5"]],
+                          [dist_band["reduction_p95"] - dist_band["reduction_mean"]]],
+                    fmt="s", color="tab:purple", capsize=4,
+                    label="Beta-compliance mean +/- band")
     ax.set_xlabel("Compliance fraction phi (who follow the recommendation)")
     ax.set_ylabel("Peak reduction at Ruins of St. Paul's (%)")
     ax.set_title("EXP-09 Part 2: routing benefit vs compliance")
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout(); io.save_figure(fig, outdir, "compliance_phi", dpi=dpi); plt.close(fig)
 
@@ -255,6 +305,15 @@ def _write_outputs(outdir, cfg, pareto_rows, phi_rows, rob_rows, res, node_order
         f"  Routing peak reduction at full compliance (phi=1): {full_phi['ruins_peak_reduction_pct']:.1f}% (UPPER BOUND)",
         f"  At phi={low_phi['phi']:.2f}: {low_phi['ruins_peak_reduction_pct']:.1f}% (deployable lower end)",
         "  -> report the band, not the single phi=1 number.",
+    ]
+    if dist_band is not None:
+        lines += [
+            f"  Heterogeneous compliance ~ Beta(mean={dist_band['phi_mean_sampled']:.2f}): "
+            f"routing peak_red mean={dist_band['reduction_mean']:.1f}% "
+            f"band[p5,p95]=[{dist_band['reduction_p5']:.1f}%, {dist_band['reduction_p95']:.1f}%] "
+            f"(n={dist_band['n_samples']}, converged={100*dist_band['frac_converged']:.0f}%)",
+        ]
+    lines += [
         "",
         "PART 3 -- robustness of the deployed routing policy (profiles x +/-20% beta):",
         f"  Ruins peak-reduction range: [{min(rob_reds):.1f}%, {max(rob_reds):.1f}%]; all converged={rob_conv}",

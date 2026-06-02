@@ -8,6 +8,7 @@ hand.
 Examples
 --------
     python main.py                     # run the full pipeline in order
+    python main.py --smoke             # no-external-data check (exp01, exp03, exp04)
     python main.py --list              # show the pipeline steps and exit
     python main.py --only exp08 exp09  # run just these (uses the latest EXP-05 fit)
     python main.py --from exp07        # run from this step to the end
@@ -64,6 +65,10 @@ STEP_INFO = {s[0]: s for s in STEPS}
 NEEDS_FITTED = {"exp07", "exp08", "exp09", "exp10", "exp11"}
 # Steps that read the processed real datasets.
 DATA_DEPENDENT = {"exp05", "exp07", "exp08", "exp09", "exp10", "exp11"}
+# Smoke set: experiments that run with NO external data (cached OSM graph +
+# synthetic fixtures only). Lets anyone verify install + solver + calibration in
+# minutes without acquiring DSEC/MGTO data. See README "Quick reproduce".
+SMOKE_STEPS = ["exp01", "exp03", "exp04"]
 
 
 def _latest_exp05_fitted() -> Path:
@@ -117,6 +122,8 @@ def _run_step(step_id: str) -> bool:
 
 
 def _select_steps(args: argparse.Namespace) -> list[str]:
+    if args.smoke:
+        return list(SMOKE_STEPS)  # no external data; ignores --only/--from
     if args.only:
         unknown = [s for s in args.only if s not in STEP_IDS]
         if unknown:
@@ -139,12 +146,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip", nargs="+", metavar="STEP", help="skip these steps")
     parser.add_argument("--keep-going", action="store_true", help="continue after a failing step")
     parser.add_argument("--list", action="store_true", help="list the pipeline steps and exit")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help=f"quick no-external-data check: run {', '.join(SMOKE_STEPS)} only",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
         print("Pipeline steps (in order):")
         for sid, label, _mod, cfg in STEPS:
-            tag = " [needs EXP-05 fit]" if sid in NEEDS_FITTED else ""
+            tags = []
+            if sid in SMOKE_STEPS:
+                tags.append("smoke")
+            if sid in NEEDS_FITTED:
+                tags.append("needs EXP-05 fit")
+            tag = f"  [{', '.join(tags)}]" if tags else ""
             print(f"  {sid:8s} {label}{tag}")
         return 0
 

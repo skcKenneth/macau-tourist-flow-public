@@ -76,7 +76,17 @@ pip install -e .
 pytest -q -m "not slow"     # unit tests (toy data; no downloads)
 ```
 
-## Reproduce
+## Quick reproduce (no external data)
+The synthetic / cached-graph experiments need **no data download** and verify the
+install, the MFG solver, and the calibration loop in a few minutes:
+```bash
+pytest -q -m "not slow"     # unit + integration tests (toy data)
+python main.py --smoke      # runs EXP-01 (cached graph), EXP-03, EXP-04 only
+```
+`--smoke` runs exactly the steps that depend on no external data (see
+`SMOKE_STEPS` in `main.py`); outputs land in `experiments/<date>_<EXP>/`.
+
+## Reproduce (full pipeline)
 Data (DSEC / MGTO / OpenStreetMap) is not redistributed — see `data/README.md`
 (a cached OSM walking graph is included). Acquire the source data, then build the
 processed datasets:

@@ -34,22 +34,18 @@ dependencies:
   - seaborn>=0.13
   - contextily>=1.5   # basemap tiles for map figures
 
-  # Config management
-  - hydra-core>=1.3
-  - omegaconf>=2.3
-
   # Serialization
   - pyarrow>=14        # parquet read/write
-  - pyyaml>=6.0
+  - pyyaml>=6.0        # config loading (yaml.safe_load)
 
   # Dev / code quality
   - ruff>=0.3
   - black>=24.0
   - pytest>=7.4
   - pytest-cov>=4.1
-  - ipykernel>=6.25    # for notebooks
 
   # pip-only packages (installed inside the conda env)
   - pip
   - pip:
     - torchdiffeq>=0.2.3   # Neural ODE; no conda package exists
+    - pdfplumber>=0.10     # DSEC PDF table parsing (src/utils/parse_dsec.py)

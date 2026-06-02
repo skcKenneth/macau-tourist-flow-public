@@ -383,6 +383,43 @@ class MFGSolver:
             "final_residual": final_residual,
         }
 
+    def transition_flows(self, rho: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        """Per-step tourist movement flows implied by an equilibrium (rho, u).
+
+        Reconstructs the softmax movement policy from ``u`` (identically to
+        :meth:`solve_fp_forward`) and multiplies by the density to obtain the
+        number of tourists traversing each edge at each step:
+
+            flow[t, v, w] = rho[t, v] * pi[t, v, w]   (exit column dropped)
+
+        The diagonal ``flow[t, v, v]`` is the "stay" mass (self-loop), not a walk.
+        These flows enable trajectory-style metrics (attraction entries, walking
+        distance) that a pure density trajectory cannot express. Evaluation-only.
+
+        Args:
+            rho: Equilibrium density (T_steps, N_nodes).
+            u: Equilibrium cost-to-go (T_steps, N_nodes).
+
+        Returns:
+            Flow tensor of shape (T_steps - 1, N_nodes, N_nodes); ``flow[t]`` maps
+            the population at step ``t`` onto step ``t + 1`` destinations.
+        """
+        gamma = self.params["gamma"]
+        N = self.N_nodes
+        eps = self.epsilon
+        flows: list[torch.Tensor] = []
+        with torch.no_grad():
+            for t in range(self.T_steps - 1):
+                Q_cont = -gamma * self.D + self.routing_bonus + u[t + 1].unsqueeze(0)
+                Q_cont = torch.where(
+                    self.D == float("inf"), torch.full_like(Q_cont, -1e9), Q_cont
+                )
+                Q_exit = torch.zeros(N, 1, dtype=torch.float32)
+                logits = torch.cat([Q_cont, Q_exit], dim=1)
+                pi = torch.softmax(logits / eps, dim=1)[:, :N]  # (N, N) move probs
+                flows.append(rho[t].unsqueeze(1) * pi)  # flow[v, w] = rho_v * pi_vw
+        return torch.stack(flows, dim=0)  # (T-1, N, N)
+
     # ------------------------------------------------------------------
     # Compliance-aware (two-type) forward solve — EXP-09 / Goal D
     # ------------------------------------------------------------------

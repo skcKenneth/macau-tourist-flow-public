@@ -6,6 +6,10 @@ import networkx as nx
 import torch
 
 from src.models.mfg_solver import MFGSolver
+from src.optimization.interventions import (
+    compliance_robustness_band,
+    sample_beta_compliance,
+)
 
 
 def _star(n=4, length=200.0):
@@ -94,3 +98,31 @@ class TestComplianceMonotonicity:
         # Monotone non-increasing peak at the bottleneck as compliance rises.
         assert peaks[0] >= peaks[1] >= peaks[2] - 1e-6
         assert peaks[2] < peaks[0]
+
+
+class TestComplianceDistribution:
+    def test_sample_beta_compliance_in_unit_interval_and_reproducible(self):
+        s1 = sample_beta_compliance(mean=0.5, concentration=8.0, n_samples=200, seed=7)
+        s2 = sample_beta_compliance(mean=0.5, concentration=8.0, n_samples=200, seed=7)
+        assert s1.shape == (200,)
+        assert torch.all((s1 > 0.0) & (s1 < 1.0))
+        assert torch.allclose(s1, s2)  # deterministic for a fixed seed
+        # Sample mean should be near the requested mean.
+        assert abs(float(s1.mean()) - 0.5) < 0.1
+
+    def test_robustness_band_brackets_deterministic_sweep(self):
+        solver = _solver()
+        g = _arrivals(solver.T_steps, solver.dt)
+        eta = _eta()
+        phi = sample_beta_compliance(mean=0.5, concentration=8.0, n_samples=24, seed=1)
+
+        band = compliance_robustness_band(
+            solver, g, eta, report_idx=1, phi_samples=phi, damping=0.5
+        )
+        # The band is well-formed and ordered.
+        assert band["n_samples"] == 24
+        assert band["reduction_min"] <= band["reduction_p5"] <= band["reduction_p50"]
+        assert band["reduction_p50"] <= band["reduction_p95"] <= band["reduction_max"]
+        assert 0.0 <= band["frac_converged"] <= 1.0
+        # eta diverts from the bottleneck (node 1), so reductions are non-negative.
+        assert band["reduction_min"] >= -1e-3

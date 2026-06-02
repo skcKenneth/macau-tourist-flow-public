@@ -63,6 +63,15 @@ class TestProfileShapes:
         ]
         assert len(maxima) == 2, f"expected 2 peaks, found {len(maxima)}"
 
+    def test_empirical_proxy_peaks_midday_and_declines(self):
+        """Proxy ramps to a late-morning/midday peak then declines into evening."""
+        w = ap.weights("empirical_proxy", T_STEPS, DT)
+        peak_hour = int(torch.argmax(w).item()) * DT
+        assert 2.5 <= peak_hour <= 4.5, f"peak at {peak_hour:.1f}h, expected midday"
+        # Evening (last hour) much lighter than the midday peak; morning lighter too.
+        assert w[-1] < w.max() * 0.3
+        assert w[0] < w.max() * 0.6
+
     def test_plateau_is_broader_than_gaussian(self):
         """The plateau should spread its mass more widely than a sharp Gaussian."""
         g = ap.weights("gaussian", T_STEPS, DT, peak_time_hours=7.0, sigma_hours=1.5)

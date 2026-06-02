@@ -32,6 +32,7 @@ import yaml
 # ---------------------------------------------------------------------------
 # Imports from EXP-05 (reuse — do not duplicate)
 # ---------------------------------------------------------------------------
+from src.optimization.interventions import EntranceMeteringOptimizer
 from src.run_exp05 import (
     ATTRACTION_COUNT,
     _build_real_arrival_tensor,
@@ -78,17 +79,8 @@ def _meter_arrivals(
 ) -> torch.Tensor:
     """Redistribute excess arrivals at source_col above R* to slack timesteps.
 
-    Total arrivals at source_col are conserved (redistribution, not deterrence).
-    All other columns are unchanged.
-
-    Algorithm:
-        1. Identify excess steps: g[:, source_col] > r_star
-        2. Compute total excess E = sum((g[t] - r_star) * dt) for excess steps
-        3. If E <= 0: return g unchanged
-        4. Clamp excess steps to r_star
-        5. Identify slack steps: g[:, source_col] < r_star
-        6. Distribute E uniformly across slack steps
-        7. Return cloned tensor
+    Thin wrapper kept for backwards compatibility; delegates to the single
+    source of truth in ``EntranceMeteringOptimizer.meter_arrivals``.
 
     Args:
         g: Arrival tensor (T_steps × N_nodes).
@@ -99,37 +91,7 @@ def _meter_arrivals(
     Returns:
         New arrival tensor of same shape; source_col peak capped at r_star.
     """
-    g_out = g.clone()
-    col = g_out[:, source_col]
-
-    excess_mask = col > r_star
-    if not excess_mask.any():
-        return g_out  # r_star is above the current peak — no change
-
-    # Total excess tourist-hours to redistribute
-    excess = float(((col - r_star) * excess_mask.float() * dt).sum().item())
-    if excess <= 0.0:
-        return g_out
-
-    # Clamp excess steps
-    col_clamped = col.clone()
-    col_clamped[excess_mask] = r_star
-    g_out[:, source_col] = col_clamped
-
-    # Capacity-proportional redistribution: fill each slack step in proportion
-    # to its remaining headroom below r_star. This guarantees no step exceeds r_star.
-    headroom = (r_star - col_clamped).clamp(min=0.0)   # tourists/hr room at each step
-    total_capacity = float((headroom * dt).sum().item())  # total redistributable tourist-hours
-
-    if total_capacity > 0.0:
-        # Fill fraction: how much of available capacity we fill
-        # If total_capacity >= excess, we can fully redistribute (conservation holds).
-        # If total_capacity < excess (very aggressive cap with long tails), we fill all
-        # capacity and accept that a small residual is lost (arrival day ends).
-        fill_fraction = min(1.0, excess / total_capacity)
-        g_out[:, source_col] = col_clamped + headroom * fill_fraction
-
-    return g_out
+    return EntranceMeteringOptimizer.meter_arrivals(g, r_star, dt, source_col)
 
 
 def _compute_metrics(
@@ -140,6 +102,10 @@ def _compute_metrics(
 ) -> dict[str, float]:
     """Compute intervention metrics from equilibrium density trajectory.
 
+    Thin wrapper kept for backwards compatibility; delegates to
+    ``EntranceMeteringOptimizer.compute_metrics`` (with ATTRACTION_COUNT
+    attraction columns).
+
     Args:
         rho: Density trajectory (T_steps × N_nodes).
         g: Arrival tensor (T_steps × N_nodes) used for this run.
@@ -147,25 +113,12 @@ def _compute_metrics(
         ruins_idx: Node index of ruins_st_pauls (default 0).
 
     Returns:
-        Dict with keys:
-            peak_density_ruins : max over time of rho[:, ruins_idx]
-            total_att_hours    : sum of rho[:, :ATTRACTION_COUNT] * dt
-            total_arrivals     : sum of g * dt (sanity check; should match baseline)
-            gini               : Gini coefficient of time-averaged density at t=-1
+        Dict with keys ``peak_density_ruins``, ``total_att_hours``,
+        ``total_arrivals`` and ``gini``.
     """
-    from src.evaluation.metrics import gini_coefficient
-
-    peak_density_ruins = float(rho[:, ruins_idx].max().item())
-    total_att_hours = float((rho[:, :ATTRACTION_COUNT] * dt).sum().item())
-    total_arrivals = float((g * dt).sum().item())
-    gini = gini_coefficient(rho, t_idx=-1)
-
-    return {
-        "peak_density_ruins": peak_density_ruins,
-        "total_att_hours": total_att_hours,
-        "total_arrivals": total_arrivals,
-        "gini": gini,
-    }
+    return EntranceMeteringOptimizer.compute_metrics(
+        rho, g, dt, bottleneck_idx=ruins_idx, attraction_count=ATTRACTION_COUNT
+    )
 
 
 def _params_to_solver_dict(
@@ -252,11 +205,18 @@ def _run_sweep_for_month(
     ferry_col = node_order.index(source_node)
     ruins_idx = node_order.index("ruins_st_pauls") if "ruins_st_pauls" in node_order else 0
 
-    # Baseline solve
+    # Metering optimiser (single source of truth for redistribution + sweep).
     solver = _make_solver(G, params_dict, cfg)
-    with torch.no_grad():
-        rho_base, _, info_base = solver.fixed_point_iteration(g_base, damping=damping)
-    m_base = _compute_metrics(rho_base, g_base, dt, ruins_idx)
+    optimizer = EntranceMeteringOptimizer(
+        solver=solver,
+        source_col=ferry_col,
+        bottleneck_idx=ruins_idx,
+        attraction_count=ATTRACTION_COUNT,
+        damping=damping,
+    )
+
+    # Baseline solve
+    m_base, info_base = optimizer.baseline(g_base)
     r_peak_base = float(g_base[:, ferry_col].max().item())
 
     logger.info(
@@ -270,43 +230,19 @@ def _run_sweep_for_month(
         info_base["n_iter"],
     )
 
-    # Sweep
-    n_points = int(sweep_cfg["n_points"])
-    r_min = r_peak_base * float(sweep_cfg["r_star_min_fraction"])
-    r_max = r_peak_base * float(sweep_cfg["r_star_max_fraction"])
-    r_values = [r_min + (r_max - r_min) * i / (n_points - 1) for i in range(n_points)]
-
-    records: list[dict] = []
-    for i, r_star in enumerate(r_values):
-        g_metered = _meter_arrivals(g_base, r_star, dt, ferry_col)
-        with torch.no_grad():
-            rho_met, _, info_met = solver.fixed_point_iteration(g_metered, damping=damping)
-        m_met = _compute_metrics(rho_met, g_metered, dt, ruins_idx)
-
-        peak_red = 100.0 * (m_base["peak_density_ruins"] - m_met["peak_density_ruins"]) / (
-            m_base["peak_density_ruins"] + 1e-12
-        )
-        visit_red = 100.0 * (m_base["total_att_hours"] - m_met["total_att_hours"]) / (
-            m_base["total_att_hours"] + 1e-12
-        )
-
-        rec = {
-            "month": str(month),
-            "r_star": r_star,
-            "r_star_fraction": r_star / r_peak_base,
-            "peak_density_ruins": m_met["peak_density_ruins"],
-            "total_att_hours": m_met["total_att_hours"],
-            "gini": m_met["gini"],
-            "peak_reduction_pct": peak_red,
-            "visit_reduction_pct": visit_red,
-            "n_fp_iter": info_met["n_iter"],
-            "fp_converged": info_met["converged"],
-        }
-        records.append(rec)
+    # Sweep (delegated to the optimiser; month tag + logging added here).
+    records = optimizer.pareto_frontier(
+        g_base,
+        n_points=int(sweep_cfg["n_points"]),
+        r_min_fraction=float(sweep_cfg["r_star_min_fraction"]),
+        r_max_fraction=float(sweep_cfg["r_star_max_fraction"]),
+    )
+    for rec in records:
+        rec["month"] = str(month)
         logger.info(
             "[%s] R*=%.1f (%.0f%%): peak_red=%.1f%% visit_red=%.1f%% iters=%d",
-            month_str, r_star, 100 * r_star / r_peak_base,
-            peak_red, visit_red, info_met["n_iter"],
+            month_str, rec["r_star"], 100 * rec["r_star_fraction"],
+            rec["peak_reduction_pct"], rec["visit_reduction_pct"], rec["n_fp_iter"],
         )
 
     # Feasibility check

@@ -16,7 +16,7 @@ Combined intervention (EXP-09) uses both A and B jointly.
 
 See docs/03_methodology.md §Phase 4 for mathematical formulation.
 
-TODO (Week 7): implement EntranceMeteringOptimizer.
+EntranceMeteringOptimizer implemented 2026-06-02 (EXP-07, consolidated).
 RoutingOptimizer implemented 2026-05-30 (EXP-08).
 """
 
@@ -28,94 +28,250 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from src.evaluation.metrics import gini_coefficient
+
 logger = logging.getLogger(__name__)
 
 
 class EntranceMeteringOptimizer:
-    """Optimise arrival rate caps at source nodes to reduce bottleneck congestion.
+    """Entrance metering via arrival redistribution and a Pareto sweep over caps.
 
-    Formulation:
-        min_{R*(t)} peak_density(rho_eq, bottleneck_node)
-        subject to: mean_attractions_visited(rho_eq) >= (1-delta) * baseline
+    This is the single source of truth for the EXP-07 metering intervention. A
+    metering policy caps the arrival rate at a source node (e.g. the Outer
+    Harbour Ferry Terminal) at ``R*`` and *redistributes* the excess arrivals to
+    off-peak slots (conserving the daily total — redistribution, not deterrence).
+    The optimiser is a 1-D parametric sweep over ``R*`` rather than gradient
+    descent: the metering operator is piecewise-constant in ``R*`` (clamp +
+    capacity-proportional fill), so a dense sweep traces the full
+    peak-vs-visit Pareto frontier more robustly than a local gradient.
 
-    where rho_eq is the MFG equilibrium under the capped arrival rate R*(t),
-    and delta is the acceptable reduction in tourist experience (e.g. 0.10).
+    Formulation (per cap R*):
+        rho_eq(R*) = MFG fixed point under the metered arrival tensor g(R*)
+        peak(R*)   = max_t rho_eq[t, bottleneck]
+        visits(R*) = sum_{attractions, t} rho_eq * dt
+    A cap is *feasible* if it achieves at least ``min_peak_reduction_pct`` peak
+    reduction while losing at most ``max_visit_reduction_pct`` attraction-hours.
 
     Args:
         solver: Calibrated MFGSolver instance.
-        source_node_ids: List of attraction_id strings for arrival source nodes.
-        bottleneck_node_ids: List of attraction_id strings to minimise congestion at.
-        baseline_rho: Baseline density (no intervention) for constraint computation.
-        delta: Maximum allowed reduction in mean attractions visited. Default 0.10.
+        source_col: Column index of the transit node whose arrivals are metered.
+        bottleneck_idx: Column index of the node whose peak density is reduced
+            (e.g. Ruins of St. Paul's). Defaults to 0.
+        attraction_count: Number of leading columns that are heritage attractions
+            (used for the total attraction-hours visit metric). Defaults to 10.
+        damping: Fixed-point damping coefficient in (0, 1]. Defaults to 0.5.
     """
 
     def __init__(
         self,
         solver: Any,
-        source_node_ids: list[str],
-        bottleneck_node_ids: list[str],
-        baseline_rho: torch.Tensor,
-        delta: float = 0.10,
+        source_col: int,
+        bottleneck_idx: int = 0,
+        attraction_count: int = 10,
+        damping: float = 0.5,
     ) -> None:
         self.solver = solver
-        self.source_node_ids = source_node_ids
-        self.bottleneck_node_ids = bottleneck_node_ids
-        self.baseline_rho = baseline_rho
-        self.delta = delta
+        self.source_col = int(source_col)
+        self.bottleneck_idx = int(bottleneck_idx)
+        self.attraction_count = int(attraction_count)
+        self.damping = float(damping)
+        self.dt = float(solver.dt)
 
-    def optimise(
-        self,
-        n_steps: int = 200,
-        lr: float = 1e-2,
-        r_min: float = 0.0,
-        r_max: float = 1.0,
-    ) -> dict[str, Any]:
-        """Run gradient descent to find the optimal metering policy.
+    @staticmethod
+    def meter_arrivals(
+        g: torch.Tensor,
+        r_star: float,
+        dt: float,
+        source_col: int,
+    ) -> torch.Tensor:
+        """Redistribute excess arrivals at ``source_col`` above R* to slack steps.
+
+        Total arrivals at ``source_col`` are conserved (redistribution, not
+        deterrence); all other columns are unchanged. Excess steps are clamped to
+        ``r_star`` and the freed tourist-hours are filled into the remaining
+        headroom of slack steps in proportion to that headroom, guaranteeing no
+        step exceeds ``r_star``.
 
         Args:
-            n_steps: Optimisation steps. Defaults to 200.
-            lr: Learning rate. Defaults to 1e-2.
-            r_min: Minimum allowed cap (fraction of uncapped arrival rate).
-            r_max: Maximum allowed cap (≤1.0 means only restricting, not adding).
+            g: Arrival tensor (T_steps x N_nodes).
+            r_star: Cap on arrival rate (tourists / hour) at the source column.
+            dt: Time step in hours.
+            source_col: Column index of the transit node to meter.
 
         Returns:
-            Dict with keys:
-            - ``r_star``: Optimal cap tensor (T_steps, len(source_node_ids)).
-            - ``peak_density_reduction_pct``: Reduction vs baseline.
-            - ``mean_attractions_visited_reduction_pct``: Visitor experience cost.
-            - ``loss_history``: List of objective values.
-
-        Raises:
-            NotImplementedError: Until Week 7 implementation.
+            New arrival tensor of same shape; source_col peak capped at r_star.
         """
-        # TODO (Week 7): implement entrance metering optimisation.
-        raise NotImplementedError(
-            "EntranceMeteringOptimizer.optimise — implement in Week 7."
+        g_out = g.clone()
+        col = g_out[:, source_col]
+
+        excess_mask = col > r_star
+        if not excess_mask.any():
+            return g_out  # r_star is above the current peak — no change
+
+        # Total excess tourist-hours to redistribute
+        excess = float(((col - r_star) * excess_mask.float() * dt).sum().item())
+        if excess <= 0.0:
+            return g_out
+
+        # Clamp excess steps
+        col_clamped = col.clone()
+        col_clamped[excess_mask] = r_star
+        g_out[:, source_col] = col_clamped
+
+        # Capacity-proportional redistribution: fill each slack step in proportion
+        # to its remaining headroom below r_star. Guarantees no step exceeds r_star.
+        headroom = (r_star - col_clamped).clamp(min=0.0)
+        total_capacity = float((headroom * dt).sum().item())
+
+        if total_capacity > 0.0:
+            # If total_capacity >= excess we fully redistribute (conservation holds);
+            # if not (very aggressive cap with long tails) we fill all capacity and a
+            # small residual is lost as the arrival day ends.
+            fill_fraction = min(1.0, excess / total_capacity)
+            g_out[:, source_col] = col_clamped + headroom * fill_fraction
+
+        return g_out
+
+    @staticmethod
+    def compute_metrics(
+        rho: torch.Tensor,
+        g: torch.Tensor,
+        dt: float,
+        bottleneck_idx: int = 0,
+        attraction_count: int = 10,
+    ) -> dict[str, float]:
+        """Compute intervention metrics from an equilibrium density trajectory.
+
+        Args:
+            rho: Density trajectory (T_steps x N_nodes).
+            g: Arrival tensor (T_steps x N_nodes) used for this run.
+            dt: Time step in hours.
+            bottleneck_idx: Node index whose peak density is reported.
+            attraction_count: Number of leading attraction columns.
+
+        Returns:
+            Dict with keys ``peak_density_ruins``, ``total_att_hours``,
+            ``total_arrivals`` and ``gini``.
+        """
+        return {
+            "peak_density_ruins": float(rho[:, bottleneck_idx].max().item()),
+            "total_att_hours": float((rho[:, :attraction_count] * dt).sum().item()),
+            "total_arrivals": float((g * dt).sum().item()),
+            "gini": gini_coefficient(rho, t_idx=-1),
+        }
+
+    def _solve(self, g: torch.Tensor) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Solve the MFG fixed point for an arrival tensor (no grad)."""
+        with torch.no_grad():
+            rho, _, info = self.solver.fixed_point_iteration(g, damping=self.damping)
+        return rho, info
+
+    def evaluate_cap(
+        self,
+        g_base: torch.Tensor,
+        r_star: float,
+        baseline_metrics: dict[str, float],
+    ) -> dict[str, Any]:
+        """Evaluate a single metering cap against a precomputed baseline.
+
+        Args:
+            g_base: Unmetered baseline arrival tensor (T_steps x N_nodes).
+            r_star: Cap to evaluate (tourists / hour) at the source column.
+            baseline_metrics: Output of :meth:`compute_metrics` on the baseline.
+
+        Returns:
+            Record dict with the cap, its absolute metrics, the peak/visit
+            reductions (%) versus baseline, and fixed-point diagnostics.
+        """
+        g_metered = self.meter_arrivals(g_base, r_star, self.dt, self.source_col)
+        rho_met, info = self._solve(g_metered)
+        m = self.compute_metrics(
+            rho_met, g_metered, self.dt, self.bottleneck_idx, self.attraction_count
         )
+
+        peak_red = 100.0 * (
+            baseline_metrics["peak_density_ruins"] - m["peak_density_ruins"]
+        ) / (baseline_metrics["peak_density_ruins"] + 1e-12)
+        visit_red = 100.0 * (
+            baseline_metrics["total_att_hours"] - m["total_att_hours"]
+        ) / (baseline_metrics["total_att_hours"] + 1e-12)
+
+        return {
+            "r_star": r_star,
+            "peak_density_ruins": m["peak_density_ruins"],
+            "total_att_hours": m["total_att_hours"],
+            "gini": m["gini"],
+            "peak_reduction_pct": peak_red,
+            "visit_reduction_pct": visit_red,
+            "n_fp_iter": info["n_iter"],
+            "fp_converged": info["converged"],
+        }
+
+    def baseline(self, g_base: torch.Tensor) -> tuple[dict[str, float], dict[str, Any]]:
+        """Solve the unmetered baseline and return (metrics, fixed-point info)."""
+        rho_base, info = self._solve(g_base)
+        metrics = self.compute_metrics(
+            rho_base, g_base, self.dt, self.bottleneck_idx, self.attraction_count
+        )
+        return metrics, info
+
+    def sweep(
+        self,
+        g_base: torch.Tensor,
+        r_values: list[float],
+        baseline_metrics: dict[str, float] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Evaluate a list of metering caps and return one record per cap.
+
+        Args:
+            g_base: Unmetered baseline arrival tensor (T_steps x N_nodes).
+            r_values: Caps (tourists / hour) to evaluate, in any order.
+            baseline_metrics: Optional precomputed baseline metrics; computed from
+                ``g_base`` if omitted.
+
+        Returns:
+            List of records as produced by :meth:`evaluate_cap`, one per cap, in
+            the order of ``r_values``. Each record additionally carries
+            ``r_star_fraction`` relative to the baseline source-column peak.
+        """
+        if baseline_metrics is None:
+            baseline_metrics, _ = self.baseline(g_base)
+        r_peak_base = float(g_base[:, self.source_col].max().item())
+
+        records: list[dict[str, Any]] = []
+        for r_star in r_values:
+            rec = self.evaluate_cap(g_base, r_star, baseline_metrics)
+            rec["r_star_fraction"] = r_star / (r_peak_base + 1e-12)
+            records.append(rec)
+        return records
 
     def pareto_frontier(
         self,
-        n_points: int = 20,
-    ) -> list[dict[str, float]]:
-        """Compute the Pareto frontier of peak density vs. attractions visited.
-
-        Sweeps the constraint ``delta`` over a range and records the optimal
-        trade-off at each point.
+        g_base: torch.Tensor,
+        n_points: int = 25,
+        r_min_fraction: float = 0.05,
+        r_max_fraction: float = 1.0,
+    ) -> list[dict[str, Any]]:
+        """Sweep caps over a fraction range and return the peak/visit trade-off.
 
         Args:
-            n_points: Number of frontier points. Defaults to 20.
+            g_base: Unmetered baseline arrival tensor (T_steps x N_nodes).
+            n_points: Number of caps in the sweep. Defaults to 25.
+            r_min_fraction: Smallest cap as a fraction of the source peak rate.
+            r_max_fraction: Largest cap as a fraction of the source peak rate.
 
         Returns:
-            List of dicts with keys ``delta``, ``peak_density``,
-            ``mean_attractions_visited``.
-
-        Raises:
-            NotImplementedError: Until Week 7 implementation.
+            List of records (see :meth:`sweep`), sorted by ascending ``r_star``.
         """
-        # TODO (Week 7): implement Pareto sweep.
-        raise NotImplementedError(
-            "EntranceMeteringOptimizer.pareto_frontier — implement in Week 7."
-        )
+        r_peak_base = float(g_base[:, self.source_col].max().item())
+        r_min = r_peak_base * float(r_min_fraction)
+        r_max = r_peak_base * float(r_max_fraction)
+        if n_points < 2:
+            raise ValueError("n_points must be >= 2 for a Pareto sweep.")
+        r_values = [
+            r_min + (r_max - r_min) * i / (n_points - 1) for i in range(n_points)
+        ]
+        return self.sweep(g_base, r_values)
 
 
 class RoutingOptimizer:
@@ -422,3 +578,108 @@ class RoutingOptimizer:
             {"src": label(i), "dst": label(j), "eta": val}
             for (i, j, val) in scored[: min(k, len(scored))]
         ]
+
+
+def sample_beta_compliance(
+    mean: float,
+    concentration: float,
+    n_samples: int,
+    seed: int = 0,
+) -> torch.Tensor:
+    """Draw compliance fractions phi ~ Beta with a given mean and concentration.
+
+    Parameterises the Beta in the intuitive (mean, concentration) form rather than
+    (a, b): ``a = mean * kappa``, ``b = (1 - mean) * kappa`` where ``kappa`` is the
+    concentration (larger kappa => tighter around the mean). This models a
+    *population* of tourists with heterogeneous / uncertain willingness to follow a
+    routing nudge, instead of one shared deterministic fraction.
+
+    Args:
+        mean: Population mean compliance in (0, 1).
+        concentration: Beta concentration kappa = a + b (> 0).
+        n_samples: Number of phi draws.
+        seed: RNG seed for reproducibility.
+
+    Returns:
+        Float32 tensor of shape (n_samples,) with values in (0, 1).
+    """
+    if not 0.0 < mean < 1.0:
+        raise ValueError(f"mean must be in (0, 1); got {mean}")
+    if concentration <= 0.0:
+        raise ValueError(f"concentration must be > 0; got {concentration}")
+    a = mean * concentration
+    b = (1.0 - mean) * concentration
+    torch.manual_seed(seed)  # torch.distributions.Beta has no per-call generator
+    samples = torch.distributions.Beta(
+        torch.tensor(a), torch.tensor(b)
+    ).sample((int(n_samples),))
+    return samples.float()
+
+
+def compliance_robustness_band(
+    solver: Any,
+    g: torch.Tensor,
+    eta: torch.Tensor,
+    report_idx: int,
+    phi_samples: torch.Tensor,
+    damping: float = 0.5,
+    percentiles: tuple[float, ...] = (5.0, 50.0, 95.0),
+) -> dict[str, Any]:
+    """Routing peak-reduction distribution under uncertain/heterogeneous compliance.
+
+    The headline routing result assumes a single deterministic compliance fraction
+    (and the ``phi=1`` perfect-compliance upper bound). This propagates a *whole
+    distribution* of ``phi`` (e.g. from :func:`sample_beta_compliance`) through the
+    two-type compliance equilibrium and reports the resulting band of peak
+    reductions at ``report_idx`` — a deployable robustness interval rather than a
+    point estimate.
+
+    Args:
+        solver: Calibrated MFGSolver (uses ``fixed_point_iteration_compliance``).
+        g: Arrival tensor (T_steps, N_nodes).
+        eta: Optimised routing bonus (N, N).
+        report_idx: Node index whose peak reduction is reported (e.g. the ruins).
+        phi_samples: 1-D tensor of compliance fractions to evaluate.
+        damping: Fixed-point damping in (0, 1].
+        percentiles: Percentiles (in %) to report from the reduction distribution.
+
+    Returns:
+        Dict with the per-sample reductions, summary statistics (mean, std,
+        min/max), the requested percentiles, the mean sampled compliance, and the
+        fraction of equilibria that converged.
+    """
+    phi_samples = torch.as_tensor(phi_samples, dtype=torch.float32).flatten()
+    if phi_samples.numel() == 0:
+        raise ValueError("phi_samples must be non-empty.")
+
+    # Baseline (no routing) peak == the phi=0 compliance equilibrium.
+    rho0, _ = solver.fixed_point_iteration_compliance(g, eta, phi=0.0, damping=damping)
+    peak0 = float(rho0[:, report_idx].max().item())
+
+    reductions: list[float] = []
+    n_converged = 0
+    for phi in phi_samples.tolist():
+        phi = min(max(float(phi), 0.0), 1.0)  # Beta draws are already in (0,1)
+        rho, info = solver.fixed_point_iteration_compliance(
+            g, eta, phi=phi, damping=damping
+        )
+        peak = float(rho[:, report_idx].max().item())
+        reductions.append(100.0 * (peak0 - peak) / (peak0 + 1e-12))
+        n_converged += int(bool(info["converged"]))
+
+    red = torch.tensor(reductions, dtype=torch.float32)
+    pct_values = {
+        f"reduction_p{p:g}": float(torch.quantile(red, p / 100.0).item())
+        for p in percentiles
+    }
+    return {
+        "n_samples": int(red.numel()),
+        "phi_mean_sampled": float(phi_samples.mean().item()),
+        "reduction_mean": float(red.mean().item()),
+        "reduction_std": float(red.std(unbiased=False).item()),
+        "reduction_min": float(red.min().item()),
+        "reduction_max": float(red.max().item()),
+        **pct_values,
+        "frac_converged": n_converged / red.numel(),
+        "reductions": reductions,
+    }

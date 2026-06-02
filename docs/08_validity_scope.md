@@ -26,14 +26,22 @@ named, swappable registry (`src/utils/arrival_profiles.py`) rather than a
 hard-coded Gaussian, so the assumption can be varied and stress-tested instead of
 hidden. The default (`gaussian`) reproduces the original behaviour exactly.
 
-## EXP-11 — stress test across four assumed profiles
+## EXP-11 — stress test across assumed profiles
 
-We re-run everything under four plausible within-day profiles, holding the
+We re-run everything under several plausible within-day profiles, holding the
 **volume** (the data) fixed:
 - **Single afternoon peak** (the default Gaussian),
 - **Broad midday plateau** (steady arrivals, no rush),
 - **Double peak** (morning + afternoon waves),
-- **Near-uniform** (essentially flat — the un-peaked limit).
+- **Near-uniform** (essentially flat — the un-peaked limit),
+- **Empirical hourly proxy** (`empirical_proxy`): an asymmetric day-tripper shape
+  with a late-morning/midday peak and a gradual afternoon decline, interpolated
+  from a documented hourly inflow envelope (Gongbei/Border-Gate crossings ramping
+  through the late morning, consistent with the typical Popular Times envelope for
+  Senado Square / Ruins of St. Paul's). It is still a **proxy** — DSEC gives only
+  monthly volume — but it is the only profile grounded in an external real-world
+  pattern rather than a synthetic functional form, so surviving it is the most
+  informative single robustness check.
 
 ### Part A — the data-validated quantity is profile-invariant
 Re-calibrating `{α_v}, β, γ` on the same train/val split under each profile:

@@ -13,7 +13,9 @@ Cross-cutting metrics logged for every model variant (from docs/05_experiment_pl
 7. Mean total walking distance per tourist
 
 Metrics 1, 4, 5 implemented in Week 2 (pulled forward for EXP-02).
-Metrics 6, 7 deferred to Week 7 (depend on trajectory representation TBD).
+Metrics 6, 7 are mean-field proxies computed from the per-step movement flows
+(``MFGSolver.transition_flows``): attraction *entries* per tourist and walking
+distance per tourist. They do not require individual trajectories.
 """
 
 from __future__ import annotations
@@ -137,43 +139,76 @@ def gini_timeseries(rho: torch.Tensor) -> np.ndarray:
 def mean_attractions_visited(
     flow_matrix: torch.Tensor,
     attraction_mask: torch.Tensor,
+    n_tourists: float,
 ) -> float:
-    """Mean number of distinct heritage attractions visited per tourist trajectory.
+    """Mean number of heritage-attraction entries per tourist (mean-field proxy).
+
+    A pure density trajectory cannot recover *distinct* attractions per tourist,
+    but the per-step movement flows can. This counts every move into a heritage
+    attraction node (excluding "stay" self-loops) and normalises by the number of
+    tourists that entered the system, giving the average count of attraction
+    arrivals per tourist over the day. Re-entries are counted (a tourist who
+    leaves and returns registers two entries), so it is an upper-leaning proxy for
+    "distinct attractions visited".
 
     Args:
-        flow_matrix: Tourist flow tensor (T_steps, N_nodes) or cumulative
-            visit count per node — exact format TBD in Week 7.
-        attraction_mask: Boolean tensor (N_nodes,), True for heritage
-            attraction nodes (excludes transit nodes).
+        flow_matrix: Movement flows (T_steps - 1, N_nodes, N_nodes) from
+            ``MFGSolver.transition_flows``; ``flow[t, v, w]`` is the number of
+            tourists moving v->w at step t.
+        attraction_mask: Boolean tensor (N_nodes,), True for heritage attraction
+            nodes (excludes transit nodes).
+        n_tourists: Total tourists that entered the system (sum of arrivals).
 
     Returns:
-        Mean number of distinct attractions visited per tourist.
-
-    Raises:
-        NotImplementedError: Until Week 7 implementation.
+        Mean attraction entries per tourist (float).
     """
-    # TODO (Week 7): implement after trajectory representation is finalised.
-    raise NotImplementedError("mean_attractions_visited — implement in Week 7.")
+    if flow_matrix.dim() != 3 or flow_matrix.shape[-1] != flow_matrix.shape[-2]:
+        raise ValueError(
+            f"flow_matrix must be (T-1, N, N); got {tuple(flow_matrix.shape)}"
+        )
+    n = flow_matrix.shape[-1]
+    mask = attraction_mask.bool()
+    if mask.shape != (n,):
+        raise ValueError(f"attraction_mask must be ({n},); got {tuple(mask.shape)}")
+
+    # Drop self-loops (stays are not "visits") and sum entries into each node.
+    moves = flow_matrix * (1.0 - torch.eye(n, dtype=flow_matrix.dtype))
+    inflow_per_node = moves.sum(dim=(0, 1))  # (N,) total entries into each w
+    entries = float(inflow_per_node[mask].sum().item())
+    return entries / (float(n_tourists) + 1e-12)
 
 
 def mean_walking_distance(
     flow_matrix: torch.Tensor,
     edge_lengths: torch.Tensor,
+    n_tourists: float,
 ) -> float:
-    """Mean total walking distance per tourist (metres).
+    """Mean total walking distance per tourist (metres), from movement flows.
+
+    Weights each edge traversal by its walking length and normalises by the
+    number of tourists. Self-loops contribute zero (``D[v, v] = 0``) and
+    unreachable edges (``D = inf``) carry ~zero flow; both are masked to avoid
+    ``inf * 0`` NaNs.
 
     Args:
-        flow_matrix: Tourist flow tensor — exact format TBD in Week 7.
-        edge_lengths: Edge length matrix (N_nodes, N_nodes) in metres.
+        flow_matrix: Movement flows (T_steps - 1, N_nodes, N_nodes) from
+            ``MFGSolver.transition_flows``.
+        edge_lengths: Walking-distance matrix (N_nodes, N_nodes) in metres
+            (``MFGSolver.D``); may contain ``inf`` for absent edges.
+        n_tourists: Total tourists that entered the system (sum of arrivals).
 
     Returns:
-        Mean walking distance per tourist in metres.
-
-    Raises:
-        NotImplementedError: Until Week 7 implementation.
+        Mean walking distance per tourist in metres (float).
     """
-    # TODO (Week 7): implement after trajectory representation is finalised.
-    raise NotImplementedError("mean_walking_distance — implement in Week 7.")
+    if flow_matrix.dim() != 3:
+        raise ValueError(
+            f"flow_matrix must be (T-1, N, N); got {tuple(flow_matrix.shape)}"
+        )
+    d = torch.where(
+        torch.isinf(edge_lengths), torch.zeros_like(edge_lengths), edge_lengths
+    )
+    total_metres = float((flow_matrix * d).sum().item())
+    return total_metres / (float(n_tourists) + 1e-12)
 
 
 def top_k_peak_densities(

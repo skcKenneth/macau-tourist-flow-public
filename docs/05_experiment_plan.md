@@ -132,8 +132,8 @@ For every model variant, log:
 3. **Number of fixed-point iterations** to convergence
 4. **Peak density at top-3 attractions**
 5. **Gini coefficient of density distribution** (measure of concentration)
-6. **Mean attractions visited per tourist**
-7. **Mean total walking distance per tourist**
+6. **Mean attractions visited per tourist** (mean-field proxy: heritage-attraction *entries* per tourist, from `MFGSolver.transition_flows`; re-entries counted)
+7. **Mean total walking distance per tourist** (metres, edge traversals weighted by walking length, from `MFGSolver.transition_flows`)
 
 ## Reproducibility checklist (every experiment)
 - [ ] Seed set and logged

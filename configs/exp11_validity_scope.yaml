@@ -64,6 +64,9 @@ profiles:
   - name: near_uniform
     label: "Near-uniform"
     params: {}
+  - name: empirical_proxy
+    label: "Empirical hourly proxy (day-tripper)"
+    params: {}
 
 # Part B — intervention robustness (FIXED EXP-05 params; only the profile varies).
 interventions:

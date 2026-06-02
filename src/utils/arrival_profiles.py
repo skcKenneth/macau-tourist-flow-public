@@ -130,12 +130,78 @@ def near_uniform(T_steps: int, dt: float) -> torch.Tensor:
     return _normalize(w, dt)
 
 
-# Registry of named profiles. All are ASSUMED shapes, not data-derived.
+def _interp_hours(t: torch.Tensor, anchor_hours, anchor_weights) -> torch.Tensor:
+    """Piecewise-linear interpolation of (hour -> weight) anchors onto grid ``t``.
+
+    ``t`` is clamped to the anchor support before interpolation so the curve is
+    flat (held at the endpoint value) outside the anchored range.
+    """
+    xs = torch.as_tensor(anchor_hours, dtype=torch.float32)
+    ys = torch.as_tensor(anchor_weights, dtype=torch.float32)
+    tc = t.clamp(min=float(xs[0]), max=float(xs[-1]))
+    idx = torch.searchsorted(xs, tc, right=True).clamp(1, xs.numel() - 1)
+    x0, x1 = xs[idx - 1], xs[idx]
+    y0, y1 = ys[idx - 1], ys[idx]
+    frac = (tc - x0) / (x1 - x0 + 1e-12)
+    return y0 + frac * (y1 - y0)
+
+
+# Hourly proxy for a typical Macau heritage-core day-tripper inflow, expressed as
+# relative weights at each hour since the 08:00 day start (t = 0 at 08:00). This is
+# a PROXY shape, not fitted DSEC data: it follows the well-documented day-tripper
+# pattern (Gongbei/Border-Gate crossings ramp through the late morning, plateau
+# around midday-early afternoon, then taper toward the evening) and is consistent
+# with the typical "Popular Times" envelope for Senado Square / Ruins of St. Paul's.
+# It exists so EXP-11 can test conclusions against a realistic *asymmetric* shape,
+# not just symmetric/synthetic ones. See docs/08_validity_scope.md.
+_EMPIRICAL_PROXY_HOURS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+_EMPIRICAL_PROXY_WEIGHTS = [
+    0.30, 0.60, 0.90, 1.00, 1.00, 0.95, 0.85, 0.75, 0.65, 0.50, 0.40, 0.30, 0.20, 0.12, 0.08,
+]
+
+
+def empirical_proxy(
+    T_steps: int,
+    dt: float,
+    anchor_hours: list[float] | None = None,
+    anchor_weights: list[float] | None = None,
+) -> torch.Tensor:
+    """Asymmetric within-day shape from an hourly day-tripper *proxy* curve.
+
+    Interpolates a documented hourly inflow envelope (late-morning ramp, midday
+    plateau, gradual afternoon decline) onto the simulation grid. This is the only
+    profile grounded in an external real-world pattern rather than a synthetic
+    functional form, so it is the most informative single robustness check: if a
+    conclusion survives under this proxy as well as the synthetic shapes, it is not
+    an artefact of the (symmetric) Gaussian assumption.
+
+    The shape is still a PROXY (DSEC gives only monthly volume), so intra-day
+    *magnitudes* remain assumption-dependent; only *relative* intervention effects
+    are reported in EXP-11.
+
+    Args:
+        T_steps: Number of discrete time steps in the operating day.
+        dt: Time step in hours.
+        anchor_hours: Optional hour offsets (since day start) for custom anchors.
+        anchor_weights: Optional relative weights at each ``anchor_hours`` point.
+    """
+    t = _t_vec(T_steps, dt)
+    hours = anchor_hours if anchor_hours is not None else _EMPIRICAL_PROXY_HOURS
+    wts = anchor_weights if anchor_weights is not None else _EMPIRICAL_PROXY_WEIGHTS
+    if len(hours) != len(wts):
+        raise ValueError("anchor_hours and anchor_weights must have equal length.")
+    w = _interp_hours(t, hours, wts)
+    return _normalize(w, dt)
+
+
+# Registry of named profiles. All are ASSUMED shapes; ``empirical_proxy`` is
+# grounded in an external hourly pattern, the others are synthetic functional forms.
 PROFILES: dict[str, Callable[..., torch.Tensor]] = {
     "gaussian": gaussian,
     "broad_midday_plateau": broad_midday_plateau,
     "double_peak": double_peak,
     "near_uniform": near_uniform,
+    "empirical_proxy": empirical_proxy,
 }
 
 

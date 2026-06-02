@@ -38,6 +38,18 @@ effect sits between these ends (e.g. a plausible 25–50% compliance yields an
 intermediate reduction — see the figure/`compliance_phi.csv`). The headline ~71% is
 explicitly the **perfect-compliance ceiling**.
 
+### Part 2b — heterogeneous / uncertain compliance band
+A single deterministic `φ` still treats the whole population as homogeneous. We
+additionally draw compliance from a **distribution** `φ ~ Beta(mean, κ)` (a
+population with heterogeneous, uncertain willingness to follow the nudge) and
+propagate every draw through the two-type equilibrium
+(`interventions.compliance_robustness_band` + `sample_beta_compliance`). This yields
+a **p5–p95 robustness band** on the routing peak-reduction (overlaid on the
+`compliance_phi` figure; full stats in `compliance_distribution.csv`), so the
+deployable claim is an interval rather than a point even before fixing a mean
+compliance level. Configure via the `compliance.distribution` block in
+`configs/exp09_combined.yaml`.
+
 ## Part 3 — Robustness
 Re-evaluating the **deployed** routing policy (the η optimised once, under full
 compliance) under the four assumed within-day profiles (Goal A) crossed with
