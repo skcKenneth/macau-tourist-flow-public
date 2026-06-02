@@ -1,0 +1,97 @@
+experiment:
+  id: EXP-11
+  name: validity_scope
+  seed: 42
+
+# Same graph / snapping / data / split as EXP-05 (apples-to-apples).
+graph:
+  bbox: [22.176, 22.222, 113.520, 113.560]
+  consolidate_tolerance_m: 15.0
+  walk_speed_kmh: 5.0
+
+snapping:
+  max_dist_attraction_m: 150.0
+  max_dist_transit_m: 300.0
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+  graph_cache_path: data/raw/osm
+  # EXP-05 fitted params: the FIXED calibrated param set for Part B (interventions).
+  fitted_params_path: experiments/20260529_EXP-05_real_calibration_2/fitted_params.yaml
+
+split:
+  train_start: "2024-01"
+  train_end: "2025-10"
+  val_start: "2025-11"
+  val_end: "2026-04"
+
+simulation:
+  dt_hours: 0.08333
+  T_hours: 14.0
+  peak_time_hours: 2.0     # default Gaussian peak (used by the 'gaussian' profile)
+  sigma_hours: 1.5
+  population_scale: 0.001
+
+solver:
+  epsilon: 0.1
+  tol: 5.0e-4
+  max_iter: 80
+  damping: 0.5
+
+# Part A — calibration settings (identical to EXP-05 for a fair invariance test).
+calibration:
+  n_epochs: 25
+  lr: 2.0e-3
+  lr_decay: 0.995
+  grad_clip: 1.0
+  lambda_reg: 1.0e-4
+  log_every: 10
+  init_beta: 0.001
+  init_gamma: 1.0e-5
+
+# The ASSUMED within-day profiles to stress-test (see src/utils/arrival_profiles.py).
+profiles:
+  - name: gaussian
+    label: "Single afternoon peak (default)"
+    params: {peak_time_hours: 2.0, sigma_hours: 1.5}
+  - name: broad_midday_plateau
+    label: "Broad midday plateau"
+    params: {half_width_hours: 4.0, edge_sigma_hours: 1.0}
+  - name: double_peak
+    label: "Double peak (morning + afternoon)"
+    params: {peak1_hours: 2.5, peak2_hours: 8.0, sigma_hours: 1.2, weight1: 0.5}
+  - name: near_uniform
+    label: "Near-uniform"
+    params: {}
+
+# Part B — intervention robustness (FIXED EXP-05 params; only the profile varies).
+interventions:
+  peak_month: "2025-08"
+  metering:
+    source_node: ferry_outer
+    r_star_fraction: 0.10      # EXP-07 best aggressive cap (10% of peak rate)
+  routing:
+    bottleneck_node: ruins_st_pauls
+    bottleneck_set: all_attractions
+    n_steps: 150               # reduced from EXP-08's 300 to keep the 4x sweep fast
+    lr: 5.0e-2
+    lr_decay: 0.99
+    grad_clip: 1.0
+    lambda_l1: 5.0e-3
+    lambda_visit: 10.0
+    delta: 0.10
+    eta_max: 0.3
+    peak_temp: 10.0
+    damping: 0.4
+
+success:
+  # Part A: held-out spatial MAE should stay below this under EVERY profile.
+  max_val_mae: 0.05
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_bar: [12, 5]
+    figsize_robust: [9, 6]

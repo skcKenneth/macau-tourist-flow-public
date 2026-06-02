@@ -1,0 +1,30 @@
+seed: 42
+
+# Part A -- contraction sweep on a 4-node toy (fast, interpretable).
+sweep:
+  betas: [0.001, 0.01, 0.05, 0.1, 0.5]
+  epsilons: [0.05, 0.1, 0.2]
+  lambdas: [1.0, 0.5]
+  max_iter: 400
+  tol: 1.0e-4
+
+# Part B -- existence/uniqueness via random initialisations.
+uniqueness:
+  beta: 0.01
+  epsilon: 0.1
+  lambda: 0.5
+  n_inits: 24
+  init_scale: 5.0
+
+# Part C -- gradient bias (one-step vs unrolled vs IFT). Only the convergent
+# regime has a stable equilibrium to differentiate; high beta (>=0.2) has none.
+gradient:
+  betas: [0.001, 0.01, 0.05, 0.1]
+  epsilon: 0.1
+  lambda: 0.5
+  unroll_K: 120
+  n_adjoint: 400
+
+output:
+  base_dir: experiments
+  dpi: 300

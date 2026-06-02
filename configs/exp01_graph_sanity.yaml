@@ -1,0 +1,41 @@
+# EXP-01: OSM Graph Sanity Check
+# Runnable as: python -m src.run_exp01
+# See docs/05_experiment_plan.md §EXP-01 for hypothesis and success criterion.
+
+experiment:
+  id: EXP-01
+  name: graph_sanity
+  seed: 42
+
+graph:
+  bbox:
+    north: 22.220
+    south: 22.183
+    east: 113.550
+    west: 113.525
+  network_type: walk
+  simplify: true
+  retain_all: false
+  consolidate_tolerance_m: 15       # merge OSM nodes within this radius
+  walk_speed_kmh: 5.0               # used for travel_time edge attribute
+  cache_path: data/raw/osm          # GraphML cached here to avoid re-download
+
+snapping:
+  max_dist_attraction_m: 100
+  max_dist_transit_m: 300
+
+validation:
+  edge_tolerance_pct: 10.0          # PASS if |osm_dist - ref_dist| / ref_dist <= this
+  min_pass_count: 18                # success criterion: ≥18/20 reference edges pass
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    node_size_attraction: 80
+    node_size_transit: 60
+    node_size_default: 5
+    color_bottleneck: "#e03030"     # red
+    color_attraction: "#2ca02c"     # green
+    color_transit: "#1f77b4"        # blue
+    color_default: "#aaaaaa"        # grey (background OSM nodes)

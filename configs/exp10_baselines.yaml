@@ -1,0 +1,65 @@
+experiment:
+  id: EXP-10
+  name: baselines
+  seed: 42
+
+graph:
+  bbox: [22.176, 22.222, 113.520, 113.560]
+  consolidate_tolerance_m: 15.0
+  walk_speed_kmh: 5.0
+
+snapping:
+  max_dist_attraction_m: 150.0
+  max_dist_transit_m: 300.0
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+  graph_cache_path: data/raw/osm
+  fitted_params_path: experiments/20260529_EXP-05_real_calibration_2/fitted_params.yaml
+
+# Same held-out split as EXP-05 (apples-to-apples with the 0.018 MAE).
+split:
+  train_start: "2024-01"
+  train_end: "2025-10"
+  val_start: "2025-11"
+  val_end: "2026-04"
+
+simulation:
+  dt_hours: 0.08333
+  T_hours: 14.0
+  peak_time_hours: 2.0
+  sigma_hours: 1.5
+  population_scale: 0.001
+
+solver:
+  epsilon: 0.1
+  tol: 5.0e-4
+  max_iter: 80
+  damping: 0.5
+
+# MFG calibration (used for the beta=0 ablation re-fit; same as EXP-05).
+calibration:
+  n_epochs: 25
+  lr: 2.0e-3
+  lr_decay: 0.995
+  grad_clip: 1.0
+  lambda_reg: 1.0e-4
+  init_beta: 0.001
+  init_gamma: 1.0e-5
+
+# Static-model (gravity / MNL) fitting.
+static_fit:
+  n_epochs: 800
+  lr: 5.0e-2
+  lr_decay: 0.999
+
+random_walk:
+  exit_rate_per_step: 0.02
+  n_tourists: 1000
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_bar: [9, 6]

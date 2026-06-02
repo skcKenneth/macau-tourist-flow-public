@@ -1,0 +1,90 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments (conda)
+.conda/
+*.conda_lock
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb~
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Data — do NOT commit raw or processed data files (>5 MB limit)
+data/raw/*
+data/processed/*
+# Keep directory structure and manifest
+!data/raw/.gitkeep
+!data/raw/MANIFEST.txt
+!data/processed/.gitkeep
+# Exception: cached OSM graph is small (~500 KB) and important for reproducibility
+!data/raw/osm/
+!data/raw/osm/*.graphml
+
+# osmnx HTTP cache
+cache/
+
+# Experiment outputs — commit only summary files, not large intermediaries
+experiments/*/
+!experiments/.gitkeep
+# To commit a specific result: git add -f experiments/20260526_EXP-01_graph_sanity/summary.txt
+
+# Report compilation artifacts
+report/*.aux
+report/*.bbl
+report/*.blg
+report/*.log
+report/*.out
+report/*.toc
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+# Keep source and figures
+!report/figures/
+!report/*.tex
+!report/*.bib
+!report/*.md
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets / credentials (never commit)
+.env
+*.key
+*.pem
+secrets.yaml
+credentials.yaml
+
+# Large binary files
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.pkl
+*.pickle
+
+# Ruff cache
+.ruff_cache/

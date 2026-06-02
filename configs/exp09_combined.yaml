@@ -1,0 +1,72 @@
+experiment:
+  id: EXP-09
+  name: combined_compliance
+  seed: 42
+
+graph:
+  bbox: [22.176, 22.222, 113.520, 113.560]
+  consolidate_tolerance_m: 15.0
+  walk_speed_kmh: 5.0
+
+snapping:
+  max_dist_attraction_m: 150.0
+  max_dist_transit_m: 300.0
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+  graph_cache_path: data/raw/osm
+  fitted_params_path: experiments/20260529_EXP-05_real_calibration_2/fitted_params.yaml
+
+simulation:
+  dt_hours: 0.08333
+  T_hours: 14.0
+  peak_time_hours: 3.0
+  sigma_hours: 1.5
+  population_scale: 0.001
+
+solver:
+  epsilon: 0.1
+  tol: 5.0e-4
+  max_iter: 200
+  damping: 0.4
+
+peak_month: "2025-08"
+bottlenecks: [ruins_st_pauls, senado_square]   # system-wide peak set for the Pareto
+
+# Routing-bonus optimisation (full-compliance design; same recipe as EXP-08/11).
+routing:
+  n_steps: 200
+  lr: 5.0e-2
+  lr_decay: 0.99
+  grad_clip: 1.0
+  lambda_l1: 5.0e-3
+  lambda_visit: 10.0
+  delta: 0.10
+  eta_max: 0.3
+  peak_temp: 10.0
+
+# Part 1 -- combined metering x routing Pareto.
+metering:
+  source_node: ferry_outer
+  r_star_fractions: [1.0, 0.75, 0.5, 0.25, 0.10]   # 1.0 = no metering
+
+# Part 2 -- compliance sweep (apply optimised eta, vary fraction who follow it).
+compliance:
+  phi_values: [0.1, 0.25, 0.5, 0.75, 1.0]
+
+# Part 3 -- robustness of the headline combined result.
+robustness:
+  profiles:
+    - {name: gaussian, label: "Single afternoon peak"}
+    - {name: broad_midday_plateau, label: "Broad midday plateau"}
+    - {name: double_peak, label: "Double peak"}
+    - {name: near_uniform, label: "Near-uniform"}
+  beta_perturbations: [0.8, 1.0, 1.2]   # +/-20% misspecification of beta
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_pareto: [8, 6]
+    figsize_phi: [8, 5]

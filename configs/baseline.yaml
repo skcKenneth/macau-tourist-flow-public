@@ -1,0 +1,21 @@
+# Baseline model configuration (stub — Week 2)
+# Random-walk Markov chain on the attraction graph.
+# See docs/05_experiment_plan.md §EXP-02.
+
+experiment:
+  id: EXP-02
+  name: baseline_random_walk
+  seed: 42
+
+model:
+  type: random_walk
+  dt_hours: 0.0833          # 5-minute steps
+  T_hours: 14.0             # 08:00 – 22:00 operating window
+  n_tourists: 10000         # synthetic population for simulation
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+
+output:
+  base_dir: experiments

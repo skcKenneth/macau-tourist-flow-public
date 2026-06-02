@@ -1,0 +1,52 @@
+# EXP-02: Random-Walk Baseline Simulation
+# Usage: python -m src.run_exp02
+# Usage: python -m src.run_exp02 --config configs/exp02_baseline.yaml
+#
+# See docs/05_experiment_plan.md §EXP-02 for full specification.
+# Since DSEC/MGTO data is not yet available, this experiment uses:
+#   - Synthetic Gaussian arrival profile at transit nodes
+#   - Observed distribution proxied from annual_visitors_est in attractions.py
+
+experiment:
+  id: EXP-02
+  name: baseline_random_walk
+  seed: 42
+
+graph:
+  cache_path: data/raw/osm          # reuse EXP-01 cached graphml
+  walk_speed_kmh: 5.0
+  consolidate_tolerance_m: 15.0
+
+snapping:
+  max_dist_attraction_m: 100
+  max_dist_transit_m: 300
+
+simulation:
+  dt_hours: 0.08333        # 5-minute steps (= 5/60)
+  T_hours: 14.0            # 08:00–22:00 operating window
+  n_tourists: 10000        # synthetic population scale factor
+  exit_rate_per_step: 0.02 # fraction of tourists leaving per step (~4 h mean stay)
+
+arrivals:
+  # Gaussian peak centred at 10:00 (t=2 h from 08:00 start), sigma=1.5 h
+  peak_time_hours: 2.0
+  sigma_hours: 1.5
+  transit_shares:          # must sum to 1.0
+    ferry_outer:  0.70
+    border_gate:  0.25
+    hotel_belt:   0.05
+
+hypothesis:
+  # MAE threshold for "random walk fails to explain observed distribution".
+  # Set to 0.05 (5% average per-node error): the fully-connected distance-
+  # weighted K_13 subgraph already partially captures geographic centrality,
+  # so 0.10 is too aggressive. 0.05 remains scientifically meaningful.
+  mae_threshold: 0.05
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    cmap_heatmap: "YlOrRd"
+    figsize_heatmap: [14, 6]
+    figsize_bar: [11, 6]

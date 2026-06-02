@@ -1,0 +1,72 @@
+experiment:
+  id: EXP-04
+  name: calibration_recovery
+  seed: 42
+
+graph:
+  n_attraction_nodes: 3    # + 1 transit hub = 4 nodes total (same as EXP-03)
+  edge_length_m: 200.0
+
+solver:
+  dt_hours: 0.08333        # 5-minute steps
+  T_hours: 14.0
+  epsilon: 0.1
+  tol: 5.0e-4              # practical convergence: residual ~1e-4 for n_tourists=100
+  max_iter: 200
+
+arrivals:
+  n_tourists: 100.0          # reduced from 1000: rho_peak~25, beta*rho*dt~0.02 << alpha*dt~0.17
+  peak_time_hours: 2.0
+  sigma_hours: 1.5
+
+calibration:
+  n_epochs: 300
+  lr: 5.0e-3
+  lr_decay: 0.995
+  grad_clip: 1.0
+  log_every: 50
+  lambda_reg: 1.0e-4
+  damping: 0.5             # EXP-03 finding: damping needed at moderate beta
+  noise_sigma: 0.10        # 10% proportional Gaussian noise on rho_obs
+  mre_threshold: 0.10      # mean relative error threshold for PASS
+
+# 5 recovery cases — theta* (true params to recover from noisy observations)
+# Init: random +-50% perturbation in log-space from theta*
+# beta in [0.005, 0.02]: ensures fixed-point convergence (see EXP-03 finding)
+cases:
+  - id: "R1_base"
+    description: "Base case: skewed alpha, mild congestion, no walk cost"
+    alpha_star: [0.0, 2.0, 1.0, 0.5]
+    beta_star: 0.01
+    gamma_star: 0.0
+
+  - id: "R2_uniform_alpha"
+    description: "Uniform attraction alphas: harder to recover ordering but easier to fit"
+    alpha_star: [0.0, 1.0, 1.0, 1.0]
+    beta_star: 0.015
+    gamma_star: 0.0
+
+  - id: "R3_strong_skew"
+    description: "Strong alpha skew: large signal makes alpha recovery easy"
+    alpha_star: [0.0, 3.0, 0.5, 0.1]
+    beta_star: 0.008
+    gamma_star: 0.0
+
+  - id: "R4_with_walk_cost"
+    description: "Non-zero walk cost: tests gamma recovery"
+    alpha_star: [0.0, 2.0, 1.0, 0.5]
+    beta_star: 0.01
+    gamma_star: 2.0e-4
+
+  - id: "R5_weak_signal"
+    description: "Weak signal: smaller alpha differences, harder recovery"
+    alpha_star: [0.0, 1.5, 1.0, 0.5]
+    beta_star: 0.012
+    gamma_star: 0.0
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_loss: [10, 4]
+    figsize_recovery: [12, 5]

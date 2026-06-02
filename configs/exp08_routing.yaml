@@ -1,0 +1,82 @@
+experiment:
+  id: EXP-08
+  name: routing
+  seed: 42
+
+# Real Macau OSM graph (same settings as EXP-05 / EXP-07)
+graph:
+  bbox: [22.176, 22.222, 113.520, 113.560]
+  consolidate_tolerance_m: 15.0
+  walk_speed_kmh: 5.0
+
+snapping:
+  max_dist_attraction_m: 150.0
+  max_dist_transit_m: 300.0
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+  graph_cache_path: data/raw/osm
+  # EXP-05 fitted parameters (alpha, beta, gamma)
+  fitted_params_path: experiments/20260529_EXP-05_real_calibration_2/fitted_params.yaml
+
+# Representative months: optimise on the first (peak), evaluate eta on all
+months:
+  - "2025-08"    # Peak month  (~4.2 M arrivals) — eta is optimised here
+  - "2025-01"    # Moderate    (~3.6 M arrivals) — robustness / transfer check
+
+simulation:
+  dt_hours: 0.08333        # 5-minute steps
+  T_hours: 14.0            # Operating day length
+  peak_time_hours: 3.0     # Arrival peak at hour 3 of the day (~10am)
+  sigma_hours: 1.5
+  population_scale: 0.001    # Match EXP-05/07: keeps beta*rho*dt << 1 for FP convergence
+
+solver:
+  epsilon: 0.1
+  tol: 5.0e-4
+  max_iter: 300
+  damping: 0.4             # More damping than EXP-07 — routing bonuses sharpen
+                           # the policy, so a smaller step keeps the FP stable.
+
+# Routing-bonus optimisation parameters
+routing:
+  bottleneck_node: ruins_st_pauls   # Headline node for reported peak reduction
+  # Objective minimises the system-wide MAX peak over this set, so the optimiser
+  # cannot just relocate the crowd onto a neighbour (that would raise its peak).
+  bottleneck_set: all_attractions   # or a list of node_ids
+  n_steps: 300
+  lr: 5.0e-2
+  lr_decay: 0.99
+  grad_clip: 1.0
+  # Loss = (system_peak / baseline_peak) + lambda_l1*||eta||_1
+  #        + lambda_visit*relu(visit_reduction - delta). The peak term is
+  # normalised to O(1), so the weights below are scale-free.
+  lambda_l1: 5.0e-3        # Sparsity weight (few, interpretable recommendations)
+  lambda_visit: 10.0       # Visit-preservation penalty (strong: O(1) peak term)
+  delta: 0.10              # Tolerated fractional drop in attraction-hours
+  eta_max: 0.3             # Box bound on |eta|. A genuine nudge: with softmax
+                           # epsilon=0.1 this shifts a choice logit by <= 3, a
+                           # strong but non-dominating recommendation.
+  peak_temp: 10.0          # Smooth-max temperature (log-sum-exp over time x B)
+  candidate_max_dist_m: null   # null = all finite edges; else filter by distance
+  candidate_dst_attractions_only: true   # recommend only attraction destinations
+                                          # (no parking tourists at transit nodes)
+
+# Success criteria
+success:
+  # Routing acts on all tourists' path choices (unlike single-terminal metering),
+  # so the target is higher than EXP-07's 5%. May be revised post-hoc with
+  # written justification per the project standing rules (as EXP-07 was).
+  min_peak_reduction_pct: 10.0   # Peak density at ruins_st_pauls must drop >= 10 %
+  max_visit_reduction_pct: 10.0  # Total attraction-hours must drop <= 10 %
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_loss: [8, 5]
+    figsize_density: [12, 5]
+    figsize_edges: [9, 6]
+    figsize_ablation: [9, 6]
+    figsize_bar: [12, 5]

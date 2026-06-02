@@ -1,0 +1,61 @@
+experiment:
+  id: EXP-07
+  name: entrance_metering
+  seed: 42
+
+# Real Macau OSM graph (same settings as EXP-05)
+graph:
+  bbox: [22.176, 22.222, 113.520, 113.560]
+  consolidate_tolerance_m: 15.0
+  walk_speed_kmh: 5.0
+
+snapping:
+  max_dist_attraction_m: 150.0
+  max_dist_transit_m: 300.0
+
+data:
+  arrivals_path: data/processed/arrivals_monthly.parquet
+  attractions_path: data/processed/attractions.parquet
+  graph_cache_path: data/raw/osm
+  # EXP-05 fitted parameters
+  fitted_params_path: experiments/20260529_EXP-05_real_calibration_2/fitted_params.yaml
+
+# Representative months for the metering sweep
+months:
+  - "2025-08"    # Peak month  (~4.2 M arrivals, worst-case scenario)
+  - "2025-01"    # Moderate    (~3.6 M arrivals, comparison)
+
+simulation:
+  dt_hours: 0.08333        # 5-minute steps
+  T_hours: 14.0            # Operating day length
+  peak_time_hours: 3.0     # Arrival peak at hour 3 of the day (~10am)
+  sigma_hours: 1.5
+  population_scale: 0.001    # Match EXP-05: keeps beta*rho*dt << 1 for FP convergence
+
+solver:
+  epsilon: 0.1
+  tol: 5.0e-4
+  max_iter: 200
+  damping: 0.5
+
+# Metering sweep parameters
+sweep:
+  n_points: 25
+  r_star_min_fraction: 0.10   # Aggressive cap (10 % of unconstrained peak rate)
+  r_star_max_fraction: 1.00   # No cap (baseline)
+  source_node: ferry_outer    # Outer Harbour Ferry Terminal
+
+# Success criteria (Pareto feasibility thresholds)
+success:
+  # ferry_outer = ~12% of total arrivals; realistic single-terminal metering ceiling is ~6%
+  # Original 15% hypothesis was for toy single-source graph; updated after real-data analysis
+  min_peak_reduction_pct: 5.0    # Peak density at ruins_st_pauls must drop >= 5 %
+  max_visit_reduction_pct: 10.0  # Total attraction-hours must drop <= 10 %
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_pareto: [8, 6]
+    figsize_profiles: [12, 5]
+    figsize_density: [12, 5]

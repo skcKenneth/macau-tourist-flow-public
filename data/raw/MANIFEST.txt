@@ -1,0 +1,11 @@
+# Data Manifest — data/raw/
+# See docs/04_data_sources.md for acquisition instructions.
+#
+# Automatically appended by: python -m src.ingest_data
+# Format (auto-appended rows): TIMESTAMP | source=X | raw=PATH | sha256_prefix=HEX | processed=PATH | rows=N | NOTES
+#
+# Manually logged entries:
+# filename | source | date_downloaded | notes
+osm/macau_walk.graphml | osmnx | 2026-05-26 | 981 nodes, 4372 edges after consolidation; cached by src/utils/graph_loader.py; EXP-01 validated
+2026-05-28 05:41:15 | source=mgto | raw=data\raw\mgto\attractions_manual.csv | sha256_prefix=cc22514bf016 | processed=data\processed\attractions.parquet | rows=60 | confidence=['estimate']
+2026-05-28 06:46:07 | source=dsec | raw=data\raw\dsec | sha256_prefix=4a5e6b89c1ff | processed=data\processed\arrivals_monthly.parquet | rows=224 | transit_points=['border_gate', 'by_air', 'by_land', 'by_sea', 'inner_harbour', 'outer_harbour', 'taipa_ferry', 'total']

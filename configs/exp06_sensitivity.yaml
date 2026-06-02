@@ -1,0 +1,59 @@
+experiment:
+  id: EXP-06
+  name: sensitivity_analysis
+  seed: 42
+
+graph:
+  n_attraction_nodes: 3       # 3 attraction nodes + 1 transit hub = 4-node star
+  edge_length_m: 200.0
+
+solver:
+  dt_hours: 0.08333           # 5-minute time steps
+  T_hours: 14.0               # 14-hour day (168 steps)
+  epsilon: 0.1                # softmax temperature for FP policy
+  tol: 5.0e-4                 # convergence tolerance (tuned in EXP-04)
+  max_iter: 200
+  damping: 0.5                # Picard damping (validated in EXP-03/04)
+
+arrivals:
+  n_tourists: 100.0           # low-scale; rho_peak~25, ensures FP convergence
+  peak_time_hours: 2.0        # arrival peak at hour 2 (9am if day starts 7am)
+  sigma_hours: 1.5            # Gaussian spread
+
+# Baseline calibrated parameters from EXP-04 R1_base recovered values
+# alpha_hat=['0.000', '2.095', '1.022', '0.527']  beta_hat=0.0133
+baseline:
+  alpha: [0.0, 2.095, 1.022, 0.527]
+  beta: 0.0133
+  gamma: 0.0
+
+# OAT sweep: multiply each parameter by these relative factors
+# 0.8 = -20%, 0.9 = -10%, 1.0 = baseline, 1.1 = +10%, 1.2 = +20%
+sweep:
+  perturbations: [0.8, 0.9, 1.0, 1.1, 1.2]
+  parameters:
+    - id: alpha_1
+      description: "Attractiveness of bottleneck node (ruins-equivalent, node 1)"
+    - id: alpha_2
+      description: "Attractiveness of secondary node (node 2)"
+    - id: beta
+      description: "Congestion sensitivity coefficient"
+    - id: gamma
+      description: "Walking cost coefficient"
+      # gamma=0 at baseline — use this value as the reference for ±20% sweep
+      baseline_override: 1.0e-4
+    - id: n_tourists
+      description: "Total tourist volume (seasonal demand proxy)"
+
+# Output metrics tracked at each solver run
+metrics:
+  - peak_density_node1    # max over time of rho[t, node=1]
+  - gini                  # Gini coefficient of time-averaged density distribution
+  - mean_attractions      # fraction of non-transit nodes with nonzero tourist presence
+
+output:
+  base_dir: experiments
+  figures:
+    dpi: 300
+    figsize_tornado: [10, 6]
+    figsize_curves: [14, 10]
