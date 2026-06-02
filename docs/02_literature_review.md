@@ -51,12 +51,20 @@
 
 ## Macau tourism — context
 
-### [TODO: find recent papers] Tourism carrying capacity of Macau Historic Centre
-- Search: "Macau heritage tourism carrying capacity", "Macau crowding", "Senado Square pedestrian"
-- DSEC publications on visitor distribution
+### Lu, H., Zhou, X., Chen, Z., & Cheng, J. (2026). Multi-source data integration for safety evaluation of walking tourism routes: coupling spatial analysis of attractiveness and carrying capacity in Macao. *Sustainability*, 18(4), 1984. https://doi.org/10.3390/su18041984
+- **What**: Integrates social-media and spatial data on MGTO walking routes; couples node attractiveness with a spatial carrying-capacity index and diagnoses “high attractiveness–low capacity” hotspots (including the Ruins of St. Paul’s corridor).
+- **Use**: **Macau-specific empirical context** for why peak-density management matters and for the core–periphery imbalance narrative. Complements our MFG intervention framing (they assess static risk; we model dynamic congestion and policy levers).
+- **Limitations**: Static / index-based capacity, not a forward-looking equilibrium model; no intervention optimisation; data are route-level proxies rather than the fine-grained 13-node graph used here.
 
-### [TODO] Macau Statistics and Census Service — Visitor Arrivals reports (quarterly)
-- Use as data source, not as scholarly reference.
+### Macao Government Tourism Office (MGTO) — visitor statistics and walking-route materials
+- **What**: Official tourism statistics, walking-route promotions, and (where available) per-attraction visitor information used in this project’s MGTO proxy (`data/raw/mgto/`).
+- **Use**: **Data provenance** for attraction-side targets and qualitative validation of which nodes are bottlenecks. Cite as institutional source, not as a peer-reviewed model.
+- **Limitations**: Per-attraction time series are often incomplete in the public record; this repo uses proxy counts where official series are missing (see `data/README.md`).
+
+### Statistics and Census Service (DSEC) — Visitor Arrivals / Tourism Statistics
+- **What**: Monthly and quarterly official arrival statistics by mode of transport (land, sea, air) for Macao.
+- **Use**: **Primary data source** for the arrival side of EXP-05 calibration (`data/processed/arrivals_monthly.parquet`). Document acquisition in `docs/04_data_sources.md`.
+- **Limitations**: Monthly aggregates only — **no within-day profile** — so intra-day `g(t)` remains an assumed shape in our MFG (see `docs/08_validity_scope.md`).
 
 ## Machine learning
 
@@ -82,7 +90,7 @@
 2. Add an entry under the appropriate section above.
 3. Write the 3-part note: what / how we use / limitations.
 4. Add the BibTeX to `report/references.bib`.
-5. Note in `docs/06_timeline.md` that you read it.
+5. Cross-check that any quantitative claim appears in `docs/05_experiment_plan.md` or the relevant experiment writeup (`docs/08`–`12`).
 
 ## Open questions for further reading
 - [ ] Does anyone publish per-attraction visitor counts for Macau heritage sites? Need to dig MGTO Yearbook of Statistics.
